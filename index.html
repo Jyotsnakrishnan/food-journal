@@ -1,22 +1,343 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Simple PWA</title>
-    <link rel="manifest" href="manifest.json">
-    <meta name="theme-color" content="#317EFB">
-</head>
-<body>
-    <h1>Hello World! This is my PWA.</h1>
-    <p>If you see this, the basic HTML is working.</p>
+import React, { useState, useEffect, useRef } from 'react';
+import { Camera, Calendar, Share, Trash2, Plus, X, Printer, FileDown, ChefHat } from 'lucide-react';
 
-    <script>
-        // Check if service workers are supported
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
-            .then(() => console.log("Service Worker Registered"));
+// --- Utility: Image Compression ---
+// Takes a file and returns a promise resolving to a compressed base64 string
+const compressImage = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 350; // Low resolution constraint
+        const MAX_HEIGHT = 350;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
         }
-    </script>
-</body>
-</html>
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        // Compress to JPEG at 0.6 quality for "low res" look and storage efficiency
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6); 
+        resolve(dataUrl);
+      };
+      img.onerror = (error) => reject(error);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
+// --- Main Application Component ---
+export default function App() {
+  const [entries, setEntries] = useState([]);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [newNote, setNewNote] = useState('');
+  const [viewMode, setViewMode] = useState('list'); // 'list', 'camera', 'print'
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Load from LocalStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem('meal_journal_entries');
+    if (saved) {
+      try {
+        setEntries(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse entries", e);
+      }
+    }
+    
+    // Inject PWA Manifest dynamically
+    const manifest = {
+      name: "Meal Journal",
+      short_name: "Meals",
+      start_url: ".",
+      display: "standalone",
+      background_color: "#ffffff",
+      theme_color: "#16a34a",
+      icons: [
+        {
+          src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2316a34a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z'/%3E%3C/svg%3E",
+          sizes: "192x192",
+          type: "image/svg+xml"
+        }
+      ]
+    };
+    
+    const stringManifest = JSON.stringify(manifest);
+    const blob = new Blob([stringManifest], {type: 'application/json'});
+    const manifestURL = URL.createObjectURL(blob);
+    let link = document.querySelector("link[rel*='manifest']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'manifest';
+      document.head.appendChild(link);
+    }
+    link.href = manifestURL;
+
+  }, []);
+
+  // Save to LocalStorage whenever entries change
+  useEffect(() => {
+    localStorage.setItem('meal_journal_entries', JSON.stringify(entries));
+  }, [entries]);
+
+  const handleFileSelect = async (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setLoading(true);
+      try {
+        const compressedBase64 = await compressImage(e.target.files[0]);
+        addEntry(compressedBase64);
+      } catch (err) {
+        alert("Error processing image");
+      }
+      setLoading(false);
+    }
+  };
+
+  const addEntry = (imageBase64) => {
+    const now = new Date();
+    const newEntry = {
+      id: Date.now(),
+      image: imageBase64,
+      date: now.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }),
+      time: now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
+      timestamp: now.toISOString(),
+      note: newNote || 'No notes added.'
+    };
+    setEntries([newEntry, ...entries]);
+    setNewNote('');
+    setViewMode('list');
+  };
+
+  const deleteEntry = (id) => {
+    if (confirm('Delete this entry?')) {
+      setEntries(entries.filter(e => e.id !== id));
+    }
+  };
+
+  const triggerPrint = () => {
+    window.print();
+  };
+
+  // --- Views ---
+
+  const renderHeader = () => (
+    <div className="flex justify-between items-center p-4 bg-white sticky top-0 z-10 shadow-sm border-b border-gray-100 print:hidden">
+      <div className="flex items-center gap-2 text-green-700 font-bold text-xl">
+        <ChefHat className="w-6 h-6" />
+        <span>MealLog</span>
+      </div>
+      <div className="flex gap-2">
+        <button 
+          onClick={() => setViewMode(viewMode === 'print' ? 'list' : 'print')}
+          className={`p-2 rounded-full ${viewMode === 'print' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}
+          title="Print/Export Mode"
+        >
+          {viewMode === 'print' ? <X className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderAddButton = () => (
+    <div className="fixed bottom-6 right-6 z-20 print:hidden">
+      <button 
+        onClick={() => {
+          setViewMode('camera');
+          setTimeout(() => fileInputRef.current?.click(), 100);
+        }}
+        className="bg-green-600 hover:bg-green-700 text-white rounded-full p-4 shadow-lg flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
+      >
+        <Camera className="w-6 h-6" />
+      </button>
+      {/* Hidden file input for native camera access */}
+      <input 
+        type="file" 
+        accept="image/*" 
+        capture="environment"
+        ref={fileInputRef}
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+    </div>
+  );
+
+  // Main List View
+  if (viewMode === 'list') {
+    return (
+      <div className="min-h-screen bg-gray-50 pb-20 font-sans">
+        {renderHeader()}
+        
+        <div className="max-w-md mx-auto p-4 space-y-6">
+          {entries.length === 0 ? (
+            <div className="text-center py-20 text-gray-400">
+              <Camera className="w-16 h-16 mx-auto mb-4 opacity-20" />
+              <p>No meals logged yet.</p>
+              <p className="text-sm">Tap the camera button to start.</p>
+            </div>
+          ) : (
+            entries.map(entry => (
+              <div key={entry.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+                <div className="relative aspect-square w-full bg-gray-100">
+                  <img src={entry.image} alt="Meal" className="w-full h-full object-cover" />
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4 pt-10">
+                    <p className="text-white font-medium">{entry.time}</p>
+                    <p className="text-white/80 text-xs">{entry.date}</p>
+                  </div>
+                </div>
+                <div className="p-4">
+                  {/* Editable Note Area */}
+                  <textarea 
+                    className="w-full text-sm text-gray-600 bg-transparent resize-none focus:outline-none focus:ring-1 focus:ring-green-200 rounded p-1"
+                    rows={2}
+                    value={entry.note}
+                    onChange={(e) => {
+                      const updated = entries.map(ent => ent.id === entry.id ? {...ent, note: e.target.value} : ent);
+                      setEntries(updated);
+                    }}
+                    placeholder="Add a note..."
+                  />
+                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
+                     <span className="text-xs text-gray-400 font-mono">ID: {entry.id.toString().slice(-6)}</span>
+                     <button onClick={() => deleteEntry(entry.id)} className="text-red-300 hover:text-red-500">
+                       <Trash2 className="w-4 h-4" />
+                     </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {loading && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-white p-4 rounded-xl flex items-center gap-3">
+              <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+              <span>Compressing Image...</span>
+            </div>
+          </div>
+        )}
+
+        {renderAddButton()}
+      </div>
+    );
+  }
+
+  // Camera Input View (Note input before saving)
+  if (viewMode === 'camera') {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4 flex flex-col items-center justify-center">
+        {loading ? (
+            <div className="text-center">
+              <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-gray-500">Processing...</p>
+            </div>
+        ) : (
+          <div className="text-center p-8 bg-white rounded-2xl shadow-sm">
+             <p className="text-gray-600 mb-4">If the camera didn't open automatically, tap below.</p>
+             <button 
+               onClick={() => fileInputRef.current?.click()}
+               className="bg-green-100 text-green-700 px-6 py-2 rounded-full font-medium mb-4"
+             >
+               Open Camera
+             </button>
+             <button onClick={() => setViewMode('list')} className="block w-full text-gray-400 text-sm mt-4">Cancel</button>
+             
+              {/* Keep hidden input available */}
+              <input 
+                type="file" 
+                accept="image/*" 
+                capture="environment"
+                ref={fileInputRef}
+                className="hidden"
+                onChange={handleFileSelect}
+              />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Print / PDF Export View
+  if (viewMode === 'print') {
+    return (
+      <div className="min-h-screen bg-white text-black p-8 max-w-3xl mx-auto">
+        {/* Controls - Hidden when actually printing */}
+        <div className="mb-8 p-4 bg-blue-50 rounded-lg flex justify-between items-center print:hidden border border-blue-100">
+          <div>
+            <h2 className="font-bold text-blue-900">Export Mode</h2>
+            <p className="text-sm text-blue-700">Click "Save as PDF" to generate your journal.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setViewMode('list')} className="px-4 py-2 text-gray-600 hover:bg-white rounded-lg transition-colors">
+              Cancel
+            </button>
+            <button 
+              onClick={triggerPrint}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center gap-2 hover:bg-blue-700 shadow-sm"
+            >
+              <FileDown className="w-4 h-4" />
+              Save as PDF
+            </button>
+          </div>
+        </div>
+
+        {/* Printable Content */}
+        <div className="print-content">
+          <h1 className="text-3xl font-bold mb-2">Meal Journal</h1>
+          <p className="text-gray-500 mb-8 border-b pb-4">
+            Exported on {new Date().toLocaleDateString()} &bull; {entries.length} Entries
+          </p>
+
+          <div className="grid grid-cols-2 gap-8">
+            {entries.map(entry => (
+              <div key={entry.id} className="break-inside-avoid mb-6 flex flex-col gap-2">
+                <div className="border rounded overflow-hidden" style={{ width: '100%', height: '250px' }}>
+                   {/* Using object-contain for print to ensure whole image is seen, or cover for aesthetics */}
+                   <img src={entry.image} className="w-full h-full object-cover" alt="Meal" />
+                </div>
+                <div>
+                  <div className="flex justify-between items-baseline border-b border-gray-200 pb-1 mb-1">
+                    <span className="font-bold text-lg">{entry.time}</span>
+                    <span className="text-sm text-gray-500">{entry.date}</span>
+                  </div>
+                  <p className="text-sm text-gray-700 leading-relaxed font-serif">{entry.note}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        
+        {/* Helper style for printing */}
+        <style>{`
+          @media print {
+            @page { margin: 2cm; }
+            body { -webkit-print-color-adjust: exact; }
+            .print\\:hidden { display: none !important; }
+            .bg-gray-50 { background-color: white !important; }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  return null;
+}
