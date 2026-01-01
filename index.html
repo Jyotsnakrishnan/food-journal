@@ -1,343 +1,142 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Calendar, Share, Trash2, Plus, X, Printer, FileDown, ChefHat } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meal Journal PWA</title>
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div id="root"></div>
 
-// --- Utility: Image Compression ---
-// Takes a file and returns a promise resolving to a compressed base64 string
-const compressImage = (file) => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = (event) => {
-      const img = new Image();
-      img.src = event.target.result;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 350; // Low resolution constraint
-        const MAX_HEIGHT = 350;
-        let width = img.width;
-        let height = img.height;
+    <script type="text/babel">
+        // We need to pull the icons from the Lucide library since we can't 'import' them
+        const { Camera, Calendar, Share, Trash2, Plus, X, Printer, FileDown, ChefHat } = lucide;
+        const { useState, useEffect, useRef } = React;
 
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
+        // --- Utility: Image Compression ---
+        const compressImage = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        const MAX_WIDTH = 350;
+                        const MAX_HEIGHT = 350;
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > height) { if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; } }
+                        else { if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; } }
+                        canvas.width = width; canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        resolve(canvas.toDataURL('image/jpeg', 0.6));
+                    };
+                };
+            });
+        };
+
+        function App() {
+            const [entries, setEntries] = useState([]);
+            const [viewMode, setViewMode] = useState('list');
+            const [loading, setLoading] = useState(false);
+            const [newNote, setNewNote] = useState('');
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                const saved = localStorage.getItem('meal_journal_entries');
+                if (saved) setEntries(JSON.parse(saved));
+                
+                // Register Service Worker
+                if ('serviceWorker' in navigator) {
+                    navigator.serviceWorker.register('sw.js');
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('meal_journal_entries', JSON.stringify(entries));
+            }, [entries]);
+
+            const handleFileSelect = async (e) => {
+                if (e.target.files && e.target.files[0]) {
+                    setLoading(true);
+                    const compressedBase64 = await compressImage(e.target.files[0]);
+                    const now = new Date();
+                    const newEntry = {
+                        id: Date.now(),
+                        image: compressedBase64,
+                        date: now.toLocaleDateString(),
+                        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        note: 'No notes added.'
+                    };
+                    setEntries([newEntry, ...entries]);
+                    setLoading(false);
+                    setViewMode('list');
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50 pb-20">
+                    <header className="flex justify-between items-center p-4 bg-white shadow-sm border-b sticky top-0 z-10">
+                        <div className="flex items-center gap-2 text-green-700 font-bold text-xl">
+                            <ChefHat /> <span>MealLog</span>
+                        </div>
+                    </header>
+
+                    <main className="max-w-md mx-auto p-4 space-y-4">
+                        {entries.length === 0 ? (
+                            <div className="text-center py-20 text-gray-400">
+                                <Camera className="mx-auto mb-2 opacity-20" size={48} />
+                                <p>No meals yet. Tap the camera!</p>
+                            </div>
+                        ) : (
+                            entries.map(entry => (
+                                <div key={entry.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border">
+                                    <img src={entry.image} className="w-full aspect-square object-cover" />
+                                    <div className="p-4">
+                                        <div className="flex justify-between text-xs text-gray-400 mb-2">
+                                            <span>{entry.date}</span> <span>{entry.time}</span>
+                                        </div>
+                                        <textarea 
+                                            className="w-full text-sm bg-transparent focus:outline-none"
+                                            value={entry.note}
+                                            onChange={(e) => {
+                                                const updated = entries.map(ent => ent.id === entry.id ? {...ent, note: e.target.value} : ent);
+                                                setEntries(updated);
+                                            }}
+                                        />
+                                        <button onClick={() => setEntries(entries.filter(e => e.id !== entry.id))} className="text-red-300 mt-2">
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </main>
+
+                    {loading && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-white">Compressing...</div>}
+
+                    <button 
+                        onClick={() => fileInputRef.current.click()}
+                        className="fixed bottom-6 right-6 bg-green-600 text-white p-4 rounded-full shadow-lg"
+                    >
+                        <Camera />
+                    </button>
+                    <input type="file" accept="image/*" capture="environment" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                </div>
+            );
         }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        // Compress to JPEG at 0.6 quality for "low res" look and storage efficiency
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.6); 
-        resolve(dataUrl);
-      };
-      img.onerror = (error) => reject(error);
-    };
-    reader.onerror = (error) => reject(error);
-  });
-};
-
-// --- Main Application Component ---
-export default function App() {
-  const [entries, setEntries] = useState([]);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [newNote, setNewNote] = useState('');
-  const [viewMode, setViewMode] = useState('list'); // 'list', 'camera', 'print'
-  const [loading, setLoading] = useState(false);
-  const fileInputRef = useRef(null);
-
-  // Load from LocalStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('meal_journal_entries');
-    if (saved) {
-      try {
-        setEntries(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse entries", e);
-      }
-    }
-    
-    // Inject PWA Manifest dynamically
-    const manifest = {
-      name: "Meal Journal",
-      short_name: "Meals",
-      start_url: ".",
-      display: "standalone",
-      background_color: "#ffffff",
-      theme_color: "#16a34a",
-      icons: [
-        {
-          src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2316a34a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20h9'/%3E%3Cpath d='M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z'/%3E%3C/svg%3E",
-          sizes: "192x192",
-          type: "image/svg+xml"
-        }
-      ]
-    };
-    
-    const stringManifest = JSON.stringify(manifest);
-    const blob = new Blob([stringManifest], {type: 'application/json'});
-    const manifestURL = URL.createObjectURL(blob);
-    let link = document.querySelector("link[rel*='manifest']");
-    if (!link) {
-      link = document.createElement('link');
-      link.rel = 'manifest';
-      document.head.appendChild(link);
-    }
-    link.href = manifestURL;
-
-  }, []);
-
-  // Save to LocalStorage whenever entries change
-  useEffect(() => {
-    localStorage.setItem('meal_journal_entries', JSON.stringify(entries));
-  }, [entries]);
-
-  const handleFileSelect = async (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setLoading(true);
-      try {
-        const compressedBase64 = await compressImage(e.target.files[0]);
-        addEntry(compressedBase64);
-      } catch (err) {
-        alert("Error processing image");
-      }
-      setLoading(false);
-    }
-  };
-
-  const addEntry = (imageBase64) => {
-    const now = new Date();
-    const newEntry = {
-      id: Date.now(),
-      image: imageBase64,
-      date: now.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' }),
-      time: now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }),
-      timestamp: now.toISOString(),
-      note: newNote || 'No notes added.'
-    };
-    setEntries([newEntry, ...entries]);
-    setNewNote('');
-    setViewMode('list');
-  };
-
-  const deleteEntry = (id) => {
-    if (confirm('Delete this entry?')) {
-      setEntries(entries.filter(e => e.id !== id));
-    }
-  };
-
-  const triggerPrint = () => {
-    window.print();
-  };
-
-  // --- Views ---
-
-  const renderHeader = () => (
-    <div className="flex justify-between items-center p-4 bg-white sticky top-0 z-10 shadow-sm border-b border-gray-100 print:hidden">
-      <div className="flex items-center gap-2 text-green-700 font-bold text-xl">
-        <ChefHat className="w-6 h-6" />
-        <span>MealLog</span>
-      </div>
-      <div className="flex gap-2">
-        <button 
-          onClick={() => setViewMode(viewMode === 'print' ? 'list' : 'print')}
-          className={`p-2 rounded-full ${viewMode === 'print' ? 'bg-green-100 text-green-700' : 'text-gray-500 hover:bg-gray-100'}`}
-          title="Print/Export Mode"
-        >
-          {viewMode === 'print' ? <X className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderAddButton = () => (
-    <div className="fixed bottom-6 right-6 z-20 print:hidden">
-      <button 
-        onClick={() => {
-          setViewMode('camera');
-          setTimeout(() => fileInputRef.current?.click(), 100);
-        }}
-        className="bg-green-600 hover:bg-green-700 text-white rounded-full p-4 shadow-lg flex items-center justify-center transition-transform hover:scale-105 active:scale-95"
-      >
-        <Camera className="w-6 h-6" />
-      </button>
-      {/* Hidden file input for native camera access */}
-      <input 
-        type="file" 
-        accept="image/*" 
-        capture="environment"
-        ref={fileInputRef}
-        className="hidden"
-        onChange={handleFileSelect}
-      />
-    </div>
-  );
-
-  // Main List View
-  if (viewMode === 'list') {
-    return (
-      <div className="min-h-screen bg-gray-50 pb-20 font-sans">
-        {renderHeader()}
-        
-        <div className="max-w-md mx-auto p-4 space-y-6">
-          {entries.length === 0 ? (
-            <div className="text-center py-20 text-gray-400">
-              <Camera className="w-16 h-16 mx-auto mb-4 opacity-20" />
-              <p>No meals logged yet.</p>
-              <p className="text-sm">Tap the camera button to start.</p>
-            </div>
-          ) : (
-            entries.map(entry => (
-              <div key={entry.id} className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-                <div className="relative aspect-square w-full bg-gray-100">
-                  <img src={entry.image} alt="Meal" className="w-full h-full object-cover" />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-4 pt-10">
-                    <p className="text-white font-medium">{entry.time}</p>
-                    <p className="text-white/80 text-xs">{entry.date}</p>
-                  </div>
-                </div>
-                <div className="p-4">
-                  {/* Editable Note Area */}
-                  <textarea 
-                    className="w-full text-sm text-gray-600 bg-transparent resize-none focus:outline-none focus:ring-1 focus:ring-green-200 rounded p-1"
-                    rows={2}
-                    value={entry.note}
-                    onChange={(e) => {
-                      const updated = entries.map(ent => ent.id === entry.id ? {...ent, note: e.target.value} : ent);
-                      setEntries(updated);
-                    }}
-                    placeholder="Add a note..."
-                  />
-                  <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
-                     <span className="text-xs text-gray-400 font-mono">ID: {entry.id.toString().slice(-6)}</span>
-                     <button onClick={() => deleteEntry(entry.id)} className="text-red-300 hover:text-red-500">
-                       <Trash2 className="w-4 h-4" />
-                     </button>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-
-        {loading && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white p-4 rounded-xl flex items-center gap-3">
-              <div className="w-5 h-5 border-2 border-green-600 border-t-transparent rounded-full animate-spin"></div>
-              <span>Compressing Image...</span>
-            </div>
-          </div>
-        )}
-
-        {renderAddButton()}
-      </div>
-    );
-  }
-
-  // Camera Input View (Note input before saving)
-  if (viewMode === 'camera') {
-    return (
-      <div className="min-h-screen bg-gray-50 p-4 flex flex-col items-center justify-center">
-        {loading ? (
-            <div className="text-center">
-              <div className="w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-gray-500">Processing...</p>
-            </div>
-        ) : (
-          <div className="text-center p-8 bg-white rounded-2xl shadow-sm">
-             <p className="text-gray-600 mb-4">If the camera didn't open automatically, tap below.</p>
-             <button 
-               onClick={() => fileInputRef.current?.click()}
-               className="bg-green-100 text-green-700 px-6 py-2 rounded-full font-medium mb-4"
-             >
-               Open Camera
-             </button>
-             <button onClick={() => setViewMode('list')} className="block w-full text-gray-400 text-sm mt-4">Cancel</button>
-             
-              {/* Keep hidden input available */}
-              <input 
-                type="file" 
-                accept="image/*" 
-                capture="environment"
-                ref={fileInputRef}
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Print / PDF Export View
-  if (viewMode === 'print') {
-    return (
-      <div className="min-h-screen bg-white text-black p-8 max-w-3xl mx-auto">
-        {/* Controls - Hidden when actually printing */}
-        <div className="mb-8 p-4 bg-blue-50 rounded-lg flex justify-between items-center print:hidden border border-blue-100">
-          <div>
-            <h2 className="font-bold text-blue-900">Export Mode</h2>
-            <p className="text-sm text-blue-700">Click "Save as PDF" to generate your journal.</p>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setViewMode('list')} className="px-4 py-2 text-gray-600 hover:bg-white rounded-lg transition-colors">
-              Cancel
-            </button>
-            <button 
-              onClick={triggerPrint}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center gap-2 hover:bg-blue-700 shadow-sm"
-            >
-              <FileDown className="w-4 h-4" />
-              Save as PDF
-            </button>
-          </div>
-        </div>
-
-        {/* Printable Content */}
-        <div className="print-content">
-          <h1 className="text-3xl font-bold mb-2">Meal Journal</h1>
-          <p className="text-gray-500 mb-8 border-b pb-4">
-            Exported on {new Date().toLocaleDateString()} &bull; {entries.length} Entries
-          </p>
-
-          <div className="grid grid-cols-2 gap-8">
-            {entries.map(entry => (
-              <div key={entry.id} className="break-inside-avoid mb-6 flex flex-col gap-2">
-                <div className="border rounded overflow-hidden" style={{ width: '100%', height: '250px' }}>
-                   {/* Using object-contain for print to ensure whole image is seen, or cover for aesthetics */}
-                   <img src={entry.image} className="w-full h-full object-cover" alt="Meal" />
-                </div>
-                <div>
-                  <div className="flex justify-between items-baseline border-b border-gray-200 pb-1 mb-1">
-                    <span className="font-bold text-lg">{entry.time}</span>
-                    <span className="text-sm text-gray-500">{entry.date}</span>
-                  </div>
-                  <p className="text-sm text-gray-700 leading-relaxed font-serif">{entry.note}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-        
-        {/* Helper style for printing */}
-        <style>{`
-          @media print {
-            @page { margin: 2cm; }
-            body { -webkit-print-color-adjust: exact; }
-            .print\\:hidden { display: none !important; }
-            .bg-gray-50 { background-color: white !important; }
-          }
-        `}</style>
-      </div>
-    );
-  }
-
-  return null;
-}
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
